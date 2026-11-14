@@ -8,16 +8,18 @@ client = genai.Client(api_key=api_key)
 
 st.title("Asisten Akuntansi")
 
-file = st.file_uploader("Unggah materi (PDF)", type="pdf")
+files = st.file_uploader("Unggah materi (PDF)", type="pdf", accept_multiple_files=True)
 
-if file:
-    reader = PdfReader(file)
+if files:
     teks = []
-    for nomor, halaman in enumerate(reader.pages, start=1):
-        teks.append(f"Halaman {nomor}:")
-        teks.append(halaman.extract_text() or "")
+    for file in files:
+        reader = PdfReader(file)
+        teks.append(f"=== Materi: {file.name} ===")
+        for nomor, halaman in enumerate(reader.pages, start=1):
+            teks.append(f"Halaman {nomor}:")
+            teks.append(halaman.extract_text() or "")
     materi = "\n".join(teks)
-    st.success("Materi berhasil dibaca.")
+    st.success(f"{len(files)} materi berhasil dibaca.")
 
     pertanyaan = st.text_input("Tulis pertanyaan lu:")
     if st.button("Tanya") and pertanyaan:
