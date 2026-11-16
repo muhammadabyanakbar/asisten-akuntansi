@@ -1,3 +1,17 @@
+import streamlit as st
+
+from ai_service import tanya_materi
+from document_reader import baca_dokumen
+
+st.title("Asisten Akuntansi")
+
+files = st.file_uploader(
+    "Unggah materi (PDF atau PPTX)",
+    type=["pdf", "pptx"],
+    accept_multiple_files=True,
+)
+
+
 @st.cache_data(show_spinner=False)
 def ekstrak_materi(nama: str, data: bytes) -> str:
     return baca_dokumen(nama, data)
