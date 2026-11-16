@@ -212,5 +212,4 @@ if st.session_state.riwayat:
         file_name="percakapan-asisten-akuntansi.md",
         mime="text/markdown",
     )
-        mime="text/markdown",
-    )
+        
