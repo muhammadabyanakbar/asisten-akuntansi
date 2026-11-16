@@ -12,6 +12,8 @@ from google.genai import types
 from pptx import Presentation
 from pypdf import PdfReader
 
+import kalkulator
+
 MODEL_DEFAULT = "gemini-3.5-flash-lite"
 BATAS_PERINGATAN = 50 * 1024 * 1024  # 50 MB
 
@@ -47,10 +49,8 @@ ATURAN_BENTUK = """Pilih bentuk jawaban sesuai kebutuhan pengguna:
 - Analisis, rasio, atau perhitungan: judul singkat, langkah bernomor, rumus, dan tabel markdown untuk hasilnya.
 - Jurnal: tabel markdown dengan kolom Tanggal, Akun, Debit, Kredit, dan baris total.
 - Perbandingan atau data dengan beberapa baris dan kolom: tabel markdown.
-- Tren waktu, perbandingan antarkategori, atau komposisi: tambahkan satu grafik di akhir jawaban dengan format berikut:
-```grafik
-{"judul": "Tren pendapatan 2024", "jenis": "garis", "label": ["Jan", "Feb", "Mar"], "seri": {"Pendapatan": [100, 120, 90]}}
-```
+- Tren waktu, perbandingan antarkategori, atau komposisi: tambahkan satu grafik di akhir jawaban dengan format berikut, tanpa tanda kutip tiga:
+[[GRAFIK]]{"judul": "Tren pendapatan 2024", "jenis": "garis", "label": ["Jan", "Feb", "Mar"], "seri": {"Pendapatan": [100, 120, 90]}}[[/GRAFIK]]
 "jenis" harus "garis" untuk tren waktu, atau "batang" untuk perbandingan antarkategori. Setiap daftar di "seri" harus sama panjang dengan "label", dan nilainya berupa angka tanpa satuan atau pemisah ribuan. Pakai paling banyak satu grafik per jawaban, dan hanya jika angkanya benar-benar ada di materi atau sudah dihitung."""
 
 ATURAN_UMUM = """Aturan umum:
@@ -63,12 +63,23 @@ ATURAN_UMUM = """Aturan umum:
 - Sebutkan nomor halaman, slide, atau tabel jika relevan.
 - Untuk perhitungan, tampilkan rumus, langkah, dan hasil akhirnya.
 - Jika pengguna tampak sangat tertekan atau cemas, tanggapi dengan empati, dan sarankan untuk berbicara dengan orang terdekat atau profesional yang tepat.
-- Aturan angka: gunakan hanya angka yang benar-benar ada di dokumen atau yang diberikan pengguna. 
-- Jika data yang diperlukan tidak tersedia, katakan dengan jelas bahwa datanya tidak ada, jangan menebak. 
-- Setiap perhitungan wajib menampilkan rumus dan langkahnya. 
-- Jika memakai asumsi, tulis asumsinya secara eksplisit di bagian akhir jawaban. 
+- Aturan angka: gunakan hanya angka yang benar-benar ada di dokumen atau yang diberikan pengguna.
+- Jika data yang diperlukan tidak tersedia, katakan dengan jelas bahwa datanya tidak ada, jangan menebak.
+- Setiap perhitungan wajib menampilkan rumus dan langkahnya.
+- Jika memakai asumsi, tulis asumsinya secara eksplisit di bagian akhir jawaban.
 - Sebutkan satuan dan periode (misalnya Rp juta, tahun 2025) setiap kali menyajikan angka.
 - Gunakan bahasa Indonesia yang sesuai dengan peran yang dipilih."""
+
+ATURAN_SUMBER = """Format sumber saat mengutip materi:
+- PDF, PPTX, DOCX: [SUMBER: nama file, halaman N] atau [SUMBER: nama file, slide N]
+- Excel dan CSV: [SUMBER: nama file, sheet X]
+Cantumkan sumber hanya untuk klaim yang berasal dari materi."""
+
+ATURAN_HITUNG = """Untuk angka yang perlu dihitung dari data Excel atau CSV, panggil fungsi jalankan_perhitungan.
+- Tulis kode pandas yang membaca dict `data`. Kuncinya berbentuk 'nama_file::sheet'.
+- Simpan jawaban akhir di variabel `hasil` dan cetak rumus dengan print.
+- Jangan menghitung angka di kepala. Setelah mendapat hasil, tampilkan rumus dan angkanya.
+- Jika fungsi mengembalikan ok=False, perbaiki kode dan coba lagi, atau jelaskan bahwa perhitungan gagal."""
 
 ANALISIS_CEPAT = {
     "Ringkasan Eksekutif": (
@@ -95,7 +106,20 @@ PROMPT_VERIFIKASI = (
     "atau tidak didukung sumber. Jika ada kesalahan, tunjukkan koreksinya."
 )
 
-POLA_GRAFIK = re.compile(r"```grafik\s*(.*?)```", re.DOTALL)
+PENANDA_GRAFIK_BUKA = "[[GRAFIK]]"
+PENANDA_GRAFIK_TUTUP = "[[/GRAFIK]]"
+POLA_GRAFIK = re.compile(re.escape(PENANDA_GRAFIK_BUKA) + r"(.*?)" + re.escape(PENANDA_GRAFIK_TUTUP), re.DOTALL)
+
+TOOL_HITUNG = types.Tool(function_declarations=[types.FunctionDeclaration(
+    name="jalankan_perhitungan",
+    description="Jalankan kode pandas untuk menghitung angka dari data tabel yang diunggah.",
+    parameters=types.Schema(
+        type="OBJECT",
+        properties={"kode": types.Schema(type="STRING",
+                                         description="Kode Python yang memakai pd, np, math, dan dict data")},
+        required=["kode"],
+    ),
+)])
 
 
 # ---------- Pembacaan dokumen ----------
@@ -160,7 +184,7 @@ def baca_dokumen(nama: str, data: bytes) -> str:
     return baca_pdf(data)
 
 
-# ---------- Data tabel untuk panel grafik ----------
+# ---------- Data tabel untuk panel grafik dan perhitungan ----------
 
 def ke_angka(teks):
     # Mengubah format Indonesia seperti "Rp9.420.000" atau "(1.500)" menjadi angka.
@@ -228,26 +252,44 @@ def get_client() -> genai.Client:
 
 
 def buat_chat(peran: str, model: str, pakai_web: bool, berpikir: bool):
-    system = f"{PERAN[peran]}\n\n{ATURAN_BENTUK}\n\n{ATURAN_UMUM}"
+    system = f"{PERAN[peran]}\n\n{ATURAN_BENTUK}\n\n{ATURAN_UMUM}\n\n{ATURAN_SUMBER}"
     if pakai_web:
+        # Gemini tidak selalu mendukung pencarian web dan function calling bersamaan.
         system += (
             "\n\nPencarian web aktif. Gunakan hasil pencarian untuk informasi terkini, "
             "dan sebutkan sumbernya secara singkat di akhir jawaban."
         )
+        alat = [types.Tool(google_search=types.GoogleSearch())]
+    else:
+        system += f"\n\n{ATURAN_HITUNG}"
+        alat = [TOOL_HITUNG]
     konfigurasi = types.GenerateContentConfig(
         system_instruction=system,
-        tools=[types.Tool(google_search=types.GoogleSearch())] if pakai_web else None,
+        tools=alat,
         thinking_config=types.ThinkingConfig(thinking_budget=-1) if berpikir else None,
     )
     return get_client().chats.create(model=model, config=konfigurasi)
 
 
-def kirim_stream(chat, materi_awal: str | None, pertanyaan: str) -> Iterator[str]:
+def tanya_stream(chat, materi_awal: str | None, pertanyaan: str, data_sesi: dict) -> Iterator[str]:
     # Materi hanya dikirim pada pesan pertama. Setelahnya, Gemini mengingat konteksnya.
     isi = f"{materi_awal}\n\nPertanyaan: {pertanyaan}" if materi_awal else pertanyaan
-    for potongan in chat.send_message_stream(isi):
-        if potongan.text:
-            yield potongan.text
+    pesan = isi
+    for _ in range(5):  # batas putaran agar tidak berulang tanpa henti
+        panggilan = []
+        for potongan in chat.send_message_stream(pesan):
+            if potongan.function_calls:
+                panggilan.extend(potongan.function_calls)
+            if potongan.text:
+                yield potongan.text
+        if not panggilan:
+            return
+        balasan = []
+        for fc in panggilan:
+            hasil = kalkulator.jalankan(fc.args.get("kode", ""), data_sesi)
+            balasan.append(types.Part.from_function_response(name=fc.name, response=hasil))
+        pesan = balasan
+    yield "\n\n(Perhitungan belum selesai setelah beberapa percobaan. Coba pertanyaan yang lebih spesifik.)"
 
 
 # ---------- Pengolahan jawaban ----------
@@ -276,7 +318,7 @@ def pisahkan_grafik(teks: str):
 
 
 def sembunyikan_grafik_sementara(teks: str) -> str:
-    return re.split(r"```grafik", teks)[0]
+    return teks.split(PENANDA_GRAFIK_BUKA)[0]
 
 
 def tulis_streaming(generator: Iterator[str], wadah) -> str:
@@ -323,7 +365,8 @@ with st.sidebar:
     pakai_web = st.toggle("Cari informasi di web", value=False)
     st.caption(
         "Mode berpikir dan pencarian web membuat jawaban lebih teliti, "
-        "tetapi memakai lebih banyak kuota dan waktu."
+        "tetapi memakai lebih banyak kuota dan waktu. Saat pencarian web aktif, "
+        "perhitungan otomatis dinonaktifkan."
     )
 
 st.title("Nexus AI")
@@ -338,6 +381,7 @@ peran = st.radio("Peran AI", list(PERAN.keys()), horizontal=True)
 
 materi = None
 tabel_tersedia: dict[str, pd.DataFrame] = {}
+data_sesi: dict[str, pd.DataFrame] = {}
 kunci = tuple((f.name, f.size) for f in files) if files else ()
 
 if files:
@@ -353,6 +397,7 @@ if files:
         bagian.append(ekstrak_materi(file.name, file.getvalue()))
         for sheet, df in ekstrak_tabel(file.name, file.getvalue()).items():
             tabel_tersedia[f"{file.name} · {sheet}"] = df
+            data_sesi[f"{file.name}::{sheet}"] = df
     materi = "\n".join(bagian)
 
 # Mulai percakapan baru saat file, peran, model, atau pengaturan berubah.
@@ -429,7 +474,7 @@ if aksi:
         wadah = st.empty()
         try:
             mentah = tulis_streaming(
-                kirim_stream(st.session_state.chat, materi_awal, perintah),
+                tanya_stream(st.session_state.chat, materi_awal, perintah, data_sesi),
                 wadah,
             )
         except Exception as e:
