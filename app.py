@@ -218,6 +218,8 @@ def ambil_tabel_docx(data: bytes) -> dict[str, pd.DataFrame]:
         baris = [[sel.text.strip() for sel in r.cells] for r in tabel.rows]
         if len(baris) < 2:
             continue
+        lebar = max(len(b) for b in baris)
+        baris = [b + [""] * (lebar - len(b)) for b in baris]
         header = []
         for i, h in enumerate(baris[0]):
             nama_kolom = h or f"Kolom {i + 1}"
@@ -228,8 +230,7 @@ def ambil_tabel_docx(data: bytes) -> dict[str, pd.DataFrame]:
         if not df.empty:
             hasil[f"Tabel {nomor}"] = rapikan_angka(df)
     return hasil
-
-
+    
 def ambil_tabel(nama: str, data: bytes) -> dict[str, pd.DataFrame]:
     nama = nama.lower()
     if nama.endswith(".xlsx"):
