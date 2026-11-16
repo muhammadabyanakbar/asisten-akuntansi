@@ -17,7 +17,7 @@ BATAS_PERINGATAN = 50 * 1024 * 1024  # 50 MB
 
 PERAN = {
     "Asisten Akuntansi": (
-        "Kamu adalah asisten utama di bidang akuntansi, analisis keuangan, dan bisnis. "
+        "Kamu adalah nexus AI, asisten utama di bidang akuntansi, analisis keuangan, dan bisnis. "
         "Keahlianmu meliputi pencatatan dan jurnal, laporan keuangan, analisis rasio, "
         "perhitungan biaya dan penyusutan, dasar perpajakan, serta analisis tren dan "
         "kinerja usaha. Jawabanmu ringkas, akurat, dan langsung ke inti."
@@ -321,7 +321,7 @@ with st.sidebar:
         "tetapi memakai lebih banyak kuota dan waktu."
     )
 
-st.title("Asisten Akuntansi")
+st.title("Nexus AI")
 
 files = st.file_uploader(
     "Unggah materi (PDF, PPTX, DOCX, XLSX, CSV), opsional",
