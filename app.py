@@ -24,8 +24,8 @@ ANALISIS_CEPAT = {
 st.title("Asisten Akuntansi")
 
 files = st.file_uploader(
-    "Unggah materi (PDF atau PPTX), opsional",
-    type=["pdf", "pptx"],
+    "Unggah materi (PDF, PPTX, DOCX, XLSX, CSV), opsional",
+    type=["pdf", "pptx", "docx", "xlsx", "csv"],
     accept_multiple_files=True,
 )
 
